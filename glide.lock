@@ -278,7 +278,7 @@ imports:
   subpackages:
   - regexp
 - name: github.com/magiconair/properties
-  version: de8848e004dd33dc07a2947b3d76f618a7fc7ef1
+  version: 7757cc9fdb852f7579b24170bcacda2c7471bb6a
 - name: github.com/matttproud/golang_protobuf_extensions
   version: c12348ce28de40eed0136aa2b644d0ee0650e56c
   subpackages:

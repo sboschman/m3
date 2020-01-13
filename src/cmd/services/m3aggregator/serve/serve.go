@@ -25,8 +25,14 @@ import (
 
 	"github.com/m3db/m3/src/aggregator/aggregator"
 	httpserver "github.com/m3db/m3/src/aggregator/server/http"
+	m3msgserver "github.com/m3db/m3/src/aggregator/server/m3msg"
 	rawtcpserver "github.com/m3db/m3/src/aggregator/server/rawtcp"
+	"github.com/m3db/m3/src/x/sampler"
 	"github.com/m3db/m3/src/x/instrument"
+)
+
+var (
+	defaultSampleRate = 0.01
 )
 
 // Serve starts serving RPC traffic.
@@ -35,6 +41,8 @@ func Serve(
 	rawTCPServerOpts rawtcpserver.Options,
 	httpAddr string,
 	httpServerOpts httpserver.Options,
+	m3msgAddr string,
+	m3msgServerOpts m3msgserver.Options,
 	aggregator aggregator.Aggregator,
 	doneCh chan struct{},
 	iOpts instrument.Options,
@@ -55,6 +63,28 @@ func Serve(
 	}
 	defer httpServer.Close()
 	log.Infof("http server: listening on %s", httpAddr)
+
+	if err := m3msgServerOpts.Validate(); err != nil {
+		return err
+	}
+	if m3msgConfig := m3msgServerOpts.M3MsgConfiguration(); m3msgConfig != nil {
+		s, err := sampler.NewSampler(defaultSampleRate)
+		if err != nil {
+			return fmt.Errorf("could not create sampler for m3msg server: %v", err)
+		}
+		m3msgServer, err := m3msgConfig.NewServer(
+			m3msgserver.NewPassThroughWriteFn(aggregator, s, log.Desugar()),
+			m3msgServerOpts.InstrumentOptions(),
+		)
+		if err != nil {
+			return fmt.Errorf("could not create m3msg server at %s: %v", m3msgAddr, err)
+		}
+		if err := m3msgServer.ListenAndServe(); err != nil {
+			return fmt.Errorf("could not start m3msg server at %s: %v", m3msgAddr, err)
+		}
+		defer m3msgServer.Close()
+		log.Infof("m3msg server: listening on %s", m3msgAddr)
+	}
 
 	// Wait for exit signal.
 	<-doneCh
