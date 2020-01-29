@@ -21,14 +21,14 @@
 package writer
 
 import (
-	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/m3db/m3/src/aggregator/sharding"
 	"github.com/m3db/m3/src/metrics/metric/aggregated"
 	xerrors "github.com/m3db/m3/src/x/errors"
 	"github.com/m3db/m3/src/x/instrument"
+
+	"github.com/pkg/errors"
 )
 
 var (
@@ -37,13 +37,11 @@ var (
 )
 
 type shardedWriter struct {
-	sync.RWMutex
-	closed bool
-
-	numShards int
-	writers   []Writer
-	locks     []sync.Mutex
+	mutex     sync.RWMutex
+	closed    bool
+	writers   []*threadsafeWriter
 	shardFn   sharding.AggregatedShardFn
+	numShards int
 }
 
 var _ Writer = &shardedWriter{}
@@ -58,33 +56,37 @@ func NewShardedWriter(
 		return nil, errShardedWriterNoWriters
 	}
 
+	threadsafeWriters := make([]*threadsafeWriter, 0, len(writers))
+	for _, w := range writers {
+		threadsafeWriters = append(threadsafeWriters, &threadsafeWriter{
+			writer: w,
+		})
+	}
+
 	return &shardedWriter{
 		numShards: len(writers),
-		writers:   writers,
-		locks:     make([]sync.Mutex, len(writers)),
+		writers:   threadsafeWriters,
 		shardFn:   shardFn,
 	}, nil
 }
 
 func (w *shardedWriter) Write(mp aggregated.ChunkedMetricWithStoragePolicy) error {
-	w.RLock()
+	w.mutex.RLock()
 	if w.closed {
-		w.RUnlock()
+		w.mutex.RUnlock()
 		return errShardedWriterClosed
 	}
 
 	shardID := w.shardFn(mp.ChunkedID, w.numShards)
-	w.locks[shardID].Lock()
 	writerErr := w.writers[shardID].Write(mp)
-	w.locks[shardID].Unlock()
-	w.RUnlock()
+	w.mutex.RUnlock()
 
 	return writerErr
 }
 
 func (w *shardedWriter) Flush() error {
-	w.RLock()
-	defer w.RUnlock()
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
 
 	if w.closed {
 		return errShardedWriterClosed
@@ -92,21 +94,19 @@ func (w *shardedWriter) Flush() error {
 
 	var multiErr xerrors.MultiError
 	for i := 0; i < w.numShards; i++ {
-		w.locks[i].Lock()
 		multiErr = multiErr.Add(w.writers[i].Flush())
-		w.locks[i].Unlock()
 	}
 
 	if multiErr.Empty() {
 		return nil
 	}
 
-	return fmt.Errorf("failed to flush sharded writer: %v", multiErr.FinalError())
+	return errors.WithMessage(multiErr.FinalError(), "failed to flush sharded writer")
 }
 
 func (w *shardedWriter) Close() error {
-	w.Lock()
-	defer w.Unlock()
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
 
 	if w.closed {
 		return errShardedWriterClosed
@@ -115,14 +115,40 @@ func (w *shardedWriter) Close() error {
 
 	var multiErr xerrors.MultiError
 	for i := 0; i < w.numShards; i++ {
-		w.locks[i].Lock()
 		multiErr = multiErr.Add(w.writers[i].Close())
-		w.locks[i].Unlock()
 	}
 
 	if multiErr.Empty() {
 		return nil
 	}
 
-	return fmt.Errorf("failed to close sharded writer: %v", multiErr.FinalError())
+	return errors.WithMessage(multiErr.FinalError(), "failed to close sharded writer")
+}
+
+type threadsafeWriter struct {
+	mutex  sync.Mutex
+	writer Writer
+}
+
+var _ Writer = &threadsafeWriter{}
+
+func (w *threadsafeWriter) Write(mp aggregated.ChunkedMetricWithStoragePolicy) error {
+	w.mutex.Lock()
+	err := w.writer.Write(mp)
+	w.mutex.Unlock()
+	return err
+}
+
+func (w *threadsafeWriter) Flush() error {
+	w.mutex.Lock()
+	err := w.writer.Flush()
+	w.mutex.Unlock()
+	return err
+}
+
+func (w *threadsafeWriter) Close() error {
+	w.mutex.Lock()
+	err := w.writer.Close()
+	w.mutex.Unlock()
+	return err
 }

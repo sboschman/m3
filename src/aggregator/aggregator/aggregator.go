@@ -242,6 +242,22 @@ func (agg *aggregator) AddForwarded(
 	return nil
 }
 
+func (agg *aggregator) passWriter() (writer.Writer, error) {
+	agg.RLock()
+	defer agg.RUnlock()
+
+	if agg.state != aggregatorOpen {
+		return nil, errAggregatorNotOpenOrClosed
+	}
+
+	passThroughWriter := agg.passThroughWriter
+	if passThroughWriter == nil {
+		return nil, errPassThroughWriterNotDefined
+	}
+
+	return passThroughWriter, nil
+}
+
 func (agg *aggregator) AddPassThrough(
 	metric aggregated.Metric,
 	metadata metadata.TimedMetadata,
@@ -249,26 +265,20 @@ func (agg *aggregator) AddPassThrough(
 	callStart := agg.nowFn()
 	agg.metrics.passThrough.Inc(1)
 
-	agg.RLock()
-	if agg.state != aggregatorOpen {
-		agg.RUnlock()
-		agg.metrics.addPassThrough.ReportError(errAggregatorAlreadyOpenOrClosed)
-		return errAggregatorNotOpenOrClosed
-	}
-	passThroughWriter := agg.passThroughWriter
-	agg.RUnlock()
-
-	if passThroughWriter == nil {
-		agg.metrics.addPassThrough.ReportError(errPassThroughWriterNotDefined)
-		return errPassThroughWriterNotDefined
+	passThroughWriter, err := agg.passWriter()
+	if err != nil {
+		agg.metrics.addPassThrough.ReportError(err)
+		return err
 	}
 
 	mp := aggregated.ChunkedMetricWithStoragePolicy{
 		ChunkedMetric: aggregated.ChunkedMetric{
 			ChunkedID: id.ChunkedID{
+				// nb: we explicitly choose to set prefix/suffix to nil here as
+				// we don't modify the name of incoming carbon metrics.
 				Prefix: nil,
-				Data:   metric.ID,
 				Suffix: nil,
+				Data:   metric.ID,
 			},
 			TimeNanos: metric.TimeNanos,
 			Value:     metric.Value,

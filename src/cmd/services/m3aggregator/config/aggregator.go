@@ -123,10 +123,10 @@ type AggregatorConfiguration struct {
 	Flush handler.FlushHandlerConfiguration `yaml:"flush"`
 
 	// PassThrough m3msg topic name.
-	PassThroughTopicName *string `yaml:"passThroughTopicName"`
+	PassThroughTopicName string `yaml:"passThroughTopicName"`
 
 	// The number of passthrough writers
-	NumPassThroughWriters *int `yaml:"numPassThroughWriters"`
+	NumPassThroughWriters int `yaml:"numPassThroughWriters"`
 
 	// Forwarding configuration.
 	Forwarding forwardingConfiguration `yaml:"forwarding"`
@@ -876,14 +876,14 @@ func (c *AggregatorConfiguration) newPassThroughWriter(
 	// temporary change to use a separate m3msg topic for pass-through metrics during the migration.
 	flushCfg := (*c).Flush // making a copy to avoid mutating original.
 	for _, handler := range flushCfg.Handlers {
-		if handler.DynamicBackend != nil && c.PassThroughTopicName != nil {
-			handler.DynamicBackend.Producer.Writer.TopicName = *c.PassThroughTopicName
+		if handler.DynamicBackend != nil && c.PassThroughTopicName != "" {
+			handler.DynamicBackend.Producer.Writer.TopicName = c.PassThroughTopicName
 		}
 	}
 
 	count := defaultNumPassThroughWriters
-	if c.NumPassThroughWriters != nil {
-		count = *c.NumPassThroughWriters
+	if c.NumPassThroughWriters != 0 {
+		count = c.NumPassThroughWriters
 	}
 
 	writers := make([]writer.Writer, 0, count)

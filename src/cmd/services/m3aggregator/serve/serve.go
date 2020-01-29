@@ -28,6 +28,8 @@ import (
 	rawtcpserver "github.com/m3db/m3/src/aggregator/server/rawtcp"
 	"github.com/m3db/m3/src/x/instrument"
 	"github.com/m3db/m3/src/x/server"
+
+	"github.com/pkg/errors"
 )
 
 var (
@@ -64,7 +66,7 @@ func Serve(
 	log.Infof("http server: listening on %s", httpAddr)
 
 	if err := m3msgServer.ListenAndServe(); err != nil {
-		return fmt.Errorf("could not start m3msg server at %s: %v", m3msgAddr, err)
+		return errors.WithMessagef(err, "could not start m3msg server at %s", m3msgAddr)
 	}
 	defer m3msgServer.Close()
 	log.Infof("m3msg server: listening on %s", m3msgAddr)
