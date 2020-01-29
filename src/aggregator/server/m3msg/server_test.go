@@ -56,7 +56,7 @@ func TestNewPassThroughWriteFn(t *testing.T) {
 	defer ctrl.Finish()
 
 	aggregator := aggregator.NewMockAggregator(ctrl)
-	writeFn := NewPassThroughWriteFn(aggregator)
+	writeFn := newPassThroughWriteFn(aggregator)
 	callback := xm3msg.NewMockCallbackable(ctrl)
 	callback.EXPECT().Callback(xm3msg.OnSuccess).Times(1)
 	aggregator.EXPECT().AddPassThrough(expectedMetric, expectedMetadata).Return(nil).Times(1)

@@ -39,7 +39,6 @@ import (
 	"github.com/m3db/m3/src/cluster/placement"
 	"github.com/m3db/m3/src/cluster/services"
 	"github.com/m3db/m3/src/cmd/services/m3aggregator/serve"
-	m3msgconfig "github.com/m3db/m3/src/cmd/services/m3coordinator/server/m3msg"
 	"github.com/m3db/m3/src/metrics/aggregation"
 	"github.com/m3db/m3/src/metrics/metric/aggregated"
 	"github.com/m3db/m3/src/metrics/pipeline/applied"
@@ -49,7 +48,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	yaml "gopkg.in/yaml.v2"
 )
 
 var (
@@ -64,7 +62,6 @@ type testServerSetup struct {
 	m3msgAddr        string
 	rawTCPServerOpts rawtcpserver.Options
 	httpServerOpts   httpserver.Options
-	m3msgServerOpts  m3msgserver.Options
 	aggregator       aggregator.Aggregator
 	aggregatorOpts   aggregator.Options
 	handler          handler.Handler
@@ -93,11 +90,6 @@ func newTestServerSetup(t *testing.T, opts testServerOptions) *testServerSetup {
 	// Create the server options.
 	rawTCPServerOpts := rawtcpserver.NewOptions()
 	httpServerOpts := httpserver.NewOptions()
-	var m3msgServerConfig m3msgconfig.Configuration
-	if err := yaml.Unmarshal([]byte(m3msgServerConfigStr), &m3msgServerConfig); err != nil {
-		return nil
-	}
-	_, m3msgServerOpts := m3msgserver.NewServerOptions(instrument.NewOptions(), &m3msgServerConfig)
 
 	// Creating the aggregator options.
 	clockOpts := opts.ClockOptions()
@@ -216,7 +208,6 @@ func newTestServerSetup(t *testing.T, opts testServerOptions) *testServerSetup {
 		m3msgAddr:        opts.M3MsgAddr(),
 		rawTCPServerOpts: rawTCPServerOpts,
 		httpServerOpts:   httpServerOpts,
-		m3msgServerOpts:  m3msgServerOpts,
 		aggregatorOpts:   aggregatorOpts,
 		handler:          handler,
 		electionKey:      electionKey,
@@ -256,6 +247,15 @@ func (ts *testServerSetup) startServer() error {
 		return err
 	}
 
+	m3msgServer, err := m3msgserver.NewPassThroughServer(
+		mustNewM3MsgConfig(),
+		ts.aggregator,
+		instrument.NewOptions(),
+	)
+	if err != nil {
+		return err
+	}
+
 	instrumentOpts := instrument.NewOptions()
 
 	go func() {
@@ -265,7 +265,7 @@ func (ts *testServerSetup) startServer() error {
 			ts.httpAddr,
 			ts.httpServerOpts,
 			ts.m3msgAddr,
-			ts.m3msgServerOpts,
+			m3msgServer,
 			ts.aggregator,
 			ts.doneCh,
 			instrumentOpts,

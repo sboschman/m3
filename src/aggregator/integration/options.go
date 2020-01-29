@@ -28,9 +28,12 @@ import (
 	"github.com/m3db/m3/src/aggregator/sharding"
 	"github.com/m3db/m3/src/cluster/kv"
 	"github.com/m3db/m3/src/cluster/kv/mem"
+	m3msgconfig "github.com/m3db/m3/src/cmd/services/m3coordinator/server/m3msg"
 	"github.com/m3db/m3/src/metrics/aggregation"
 	"github.com/m3db/m3/src/x/clock"
 	"github.com/m3db/m3/src/x/instrument"
+
+	yaml "gopkg.in/yaml.v2"
 )
 
 const (
@@ -78,7 +81,7 @@ consumer:
     bytesPool:
       watermark:
         high: 0.002
-	`
+`
 )
 
 type testServerOptions interface {
@@ -536,4 +539,13 @@ func defaultMaxAllowedForwardingDelayFn(
 	numForwardedTimes int,
 ) time.Duration {
 	return resolution + time.Second*time.Duration(numForwardedTimes)
+}
+
+func mustNewM3MsgConfig() *m3msgconfig.Configuration {
+	var m3msgServerConfig m3msgconfig.Configuration
+	err := yaml.Unmarshal([]byte(m3msgServerConfigStr), &m3msgServerConfig)
+	if err != nil {
+		panic(err.Error())
+	}
+	return &m3msgServerConfig
 }
