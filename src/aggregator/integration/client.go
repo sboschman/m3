@@ -191,7 +191,6 @@ func (c *client) writePassThroughMetricWithMetadata(
 	metric aggregated.Metric,
 	metadata metadata.TimedMetadata,
 ) error {
-	// Siyu?
 	msg := encoding.UnaggregatedMessageUnion{
 		Type: encoding.TimedMetricWithMetadataType,
 		TimedMetricWithMetadata: aggregated.TimedMetricWithMetadata{
