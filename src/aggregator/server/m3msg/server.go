@@ -22,24 +22,25 @@ package m3msg
 
 import (
 	"context"
+	"errors"
 
 	"github.com/m3db/m3/src/aggregator/aggregator"
 	"github.com/m3db/m3/src/cmd/services/m3coordinator/server/m3msg"
-	"github.com/m3db/m3/src/metrics/aggregation"
 	"github.com/m3db/m3/src/metrics/metadata"
 	"github.com/m3db/m3/src/metrics/metric"
 	"github.com/m3db/m3/src/metrics/metric/aggregated"
 	"github.com/m3db/m3/src/metrics/policy"
-	"github.com/m3db/m3/src/x/sampler"
-
-	"go.uber.org/zap"
+	"github.com/m3db/m3/src/x/instrument"
+	"github.com/m3db/m3/src/x/server"
 )
 
-// NewPassThroughWriteFn returns the m3msg write function for pass-through metrics.
-func NewPassThroughWriteFn(
+var (
+	errServerAddressEmpty = errors.New("m3msg server address is empty")
+)
+
+// newPassThroughWriteFn returns the m3msg write function for pass-through metrics.
+func newPassThroughWriteFn(
 	aggregator aggregator.Aggregator,
-	s *sampler.Sampler,
-	log *zap.Logger,
 ) m3msg.WriteFn {
 	return func(
 		ctx context.Context,
@@ -49,7 +50,7 @@ func NewPassThroughWriteFn(
 		sp policy.StoragePolicy,
 		callback m3msg.Callbackable,
 	) {
-		// The type of a pass-through metric does not matter as it is written directly into m3db.
+		// The type of a pass-through metric does not matter.
 		metric := aggregated.Metric{
 			Type:      metric.GaugeType,
 			ID:        id,
@@ -57,41 +58,29 @@ func NewPassThroughWriteFn(
 			Value:     value,
 		}
 		metadata := metadata.TimedMetadata{
-			AggregationID: aggregation.MustCompressTypes(aggregation.Last),
 			StoragePolicy: sp,
 		}
 
 		if err := aggregator.AddPassThrough(metric, metadata); err != nil {
-			log.Info("[FAIL] to write pass-through metric",
-				zap.String("metric", metric.String()),
-				zap.String("aggregationID", metadata.AggregationID.String()),
-				zap.String("storagePolicy", metadata.StoragePolicy.String()),
-			)
-			callback.Callback(m3msg.OnRetriableError)
+			// nb: if we want to apply back pressure upstream (in this case the collector
+			// producting the metrics), we need to propagate the retryability of this error.
+			// Currently, we drop metrics upon the floor in case of errors.
+			callback.Callback(m3msg.OnNonRetriableError)
+			return
 		}
 
-		if s != nil && s.Sample() {
-			log.Info("[SUCCESS] to write pass-through metric (sampled)",
-				zap.String("metric", metric.String()),
-				zap.String("aggregationID", metadata.AggregationID.String()),
-				zap.String("storagePolicy", metadata.StoragePolicy.String()),
-			)
-		}
 		callback.Callback(m3msg.OnSuccess)
 	}
 }
 
-type addPassThroughError struct {
-	err error
-}
-
-func toAddPassThroughError(err error) error {
-	if err == nil {
-		return nil
+// NewPassThroughServer returns a m3msg server for pass-through metrics.
+func NewPassThroughServer(
+	cfg *m3msg.Configuration,
+	agg aggregator.Aggregator,
+	iOpts instrument.Options,
+) (server.Server, error) {
+	if cfg.Server.ListenAddress == "" {
+		return nil, errServerAddressEmpty
 	}
-	return addPassThroughError{
-		err: err,
-	}
+	return cfg.NewServer(newPassThroughWriteFn(agg), iOpts)
 }
-
-func (e addPassThroughError) Error() string { return e.err.Error() }

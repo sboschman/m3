@@ -94,11 +94,6 @@ func main() {
 	httpAddr := cfg.HTTP.ListenAddress
 	httpServerOpts := cfg.HTTP.NewServerOptions()
 
-	// Get the m3msg server options.
-	m3msgServerScope := scope.SubScope("m3msg-server").Tagged(map[string]string{"server": "m3msg"})
-	iOpts = instrumentOpts.SetMetricsScope(m3msgServerScope)
-	m3msgAddr, m3msgServerOpts := m3msg.NewServerOptions(iOpts, cfg.M3msg)
-
 	// Create the kv client.
 	iOpts = instrumentOpts.SetMetricsScope(scope.SubScope("kv-client"))
 	client, err := cfg.KVClient.NewKVClient(iOpts)
@@ -120,6 +115,14 @@ func main() {
 		logger.Fatal("error opening the aggregator", zap.Error(err))
 	}
 
+	// Get the m3msg server.
+	iOpts = instrumentOpts.SetMetricsScope(scope.SubScope("m3msg-server"))
+	m3msgAddr := cfg.M3Msg.Server.ListenAddress
+	m3msgServer, err := m3msg.NewPassThroughServer(cfg.M3Msg, aggregator, iOpts)
+	if err != nil {
+		logger.Fatal("error creating m3msg server", zap.Error(err), zap.String("address", m3msgAddr))
+	}
+
 	// Watch runtime option changes after aggregator is open.
 	placementManager := aggregatorOpts.PlacementManager()
 	cfg.RuntimeOptions.WatchRuntimeOptionChanges(client, runtimeOptsManager, placementManager, logger)
@@ -133,7 +136,7 @@ func main() {
 			httpAddr,
 			httpServerOpts,
 			m3msgAddr,
-			m3msgServerOpts,
+			m3msgServer,
 			aggregator,
 			doneCh,
 			instrumentOpts,

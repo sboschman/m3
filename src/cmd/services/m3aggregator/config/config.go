@@ -40,8 +40,8 @@ type Configuration struct {
 	// HTTP server configuration.
 	HTTP HTTPServerConfiguration `yaml:"http"`
 
-	// M3msg server configuration.
-	M3msg *m3msg.Configuration `yaml:"m3msg"`
+	// M3Msg server configuration.
+	M3Msg *m3msg.Configuration `yaml:"m3msg"`
 
 	// Client configuration for key value store.
 	KVClient KVClientConfiguration `yaml:"kvClient" validate:"nonzero"`

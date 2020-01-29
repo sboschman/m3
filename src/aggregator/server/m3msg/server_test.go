@@ -27,7 +27,6 @@ import (
 
 	"github.com/m3db/m3/src/aggregator/aggregator"
 	xm3msg "github.com/m3db/m3/src/cmd/services/m3coordinator/server/m3msg"
-	"github.com/m3db/m3/src/metrics/aggregation"
 	"github.com/m3db/m3/src/metrics/metadata"
 	"github.com/m3db/m3/src/metrics/metric"
 	"github.com/m3db/m3/src/metrics/metric/aggregated"
@@ -35,7 +34,6 @@ import (
 	xtime "github.com/m3db/m3/src/x/time"
 
 	"github.com/golang/mock/gomock"
-	"go.uber.org/zap"
 )
 
 var (
@@ -49,7 +47,6 @@ var (
 	}
 
 	expectedMetadata = metadata.TimedMetadata{
-		AggregationID: aggregation.MustCompressTypes(aggregation.Last),
 		StoragePolicy: defaultStoragePolicy,
 	}
 )
@@ -59,7 +56,7 @@ func TestNewPassThroughWriteFn(t *testing.T) {
 	defer ctrl.Finish()
 
 	aggregator := aggregator.NewMockAggregator(ctrl)
-	writeFn := NewPassThroughWriteFn(aggregator, nil, zap.NewNop())
+	writeFn := NewPassThroughWriteFn(aggregator)
 	callback := xm3msg.NewMockCallbackable(ctrl)
 	callback.EXPECT().Callback(xm3msg.OnSuccess).Times(1)
 	aggregator.EXPECT().AddPassThrough(expectedMetric, expectedMetadata).Return(nil).Times(1)

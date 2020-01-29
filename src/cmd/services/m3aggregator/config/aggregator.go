@@ -28,7 +28,6 @@ import (
 	"os"
 	"runtime"
 	"sort"
-	"sync"
 	"strings"
 	"time"
 
@@ -44,7 +43,6 @@ import (
 	"github.com/m3db/m3/src/cluster/placement"
 	"github.com/m3db/m3/src/cluster/services"
 	"github.com/m3db/m3/src/metrics/aggregation"
-	"github.com/m3db/m3/src/metrics/metric/aggregated"
 	"github.com/m3db/m3/src/metrics/pipeline/applied"
 	"github.com/m3db/m3/src/metrics/policy"
 	"github.com/m3db/m3/src/x/clock"
@@ -53,8 +51,6 @@ import (
 	"github.com/m3db/m3/src/x/pool"
 	"github.com/m3db/m3/src/x/retry"
 	m3sync "github.com/m3db/m3/src/x/sync"
-
-	"github.com/uber-go/tally"
 )
 
 var (
@@ -377,9 +373,12 @@ func (c *AggregatorConfiguration) NewAggregatorOptions(
 	opts = opts.SetFlushHandler(flushHandler)
 
 	// Set passthrough writer.
-	passThroughScope := scope.SubScope("passthrough-writer")
-	iOpts = instrumentOpts.SetMetricsScope(passThroughScope)
-	passThroughWriter, err := c.newPassThroughWriter(client, iOpts, passThroughScope, opts.ShardFn())
+	aggShardFn, err := hashType.AggregatedShardFn()
+	if err != nil {
+		return nil, err
+	}
+	iOpts = instrumentOpts.SetMetricsScope(scope.SubScope("passthrough-writer"))
+	passThroughWriter, err := c.newPassThroughWriter(client, iOpts, aggShardFn)
 	if err != nil {
 		return nil, err
 	}
@@ -869,22 +868,14 @@ func setMetricPrefix(
 	return fn([]byte(*str))
 }
 
-// passThroughWriter writes passthrough metrics to backends.
-type passThroughWriter struct {
-	numShards int
-	writers   []writer.Writer
-	locks     []sync.Mutex
-	shardFn   sharding.ShardFn
-}
-
 func (c *AggregatorConfiguration) newPassThroughWriter(
 	cs client.Client,
 	iOpts instrument.Options,
-	scope tally.Scope,
-	shardFn sharding.ShardFn,
+	shardFn sharding.AggregatedShardFn,
 ) (writer.Writer, error) {
-	// This is a temporary change to use a separate m3msg topic for pass-through metrics during the migration.
-	for _, handler := range c.Flush.Handlers {
+	// temporary change to use a separate m3msg topic for pass-through metrics during the migration.
+	flushCfg := (*c).Flush // making a copy to avoid mutating original.
+	for _, handler := range flushCfg.Handlers {
 		if handler.DynamicBackend != nil && c.PassThroughTopicName != nil {
 			handler.DynamicBackend.Producer.Writer.TopicName = *c.PassThroughTopicName
 		}
@@ -897,62 +888,16 @@ func (c *AggregatorConfiguration) newPassThroughWriter(
 
 	writers := make([]writer.Writer, 0, count)
 	for i := 0; i < count; i++ {
-		handler, err := c.Flush.NewHandler(cs, iOpts)
+		handler, err := flushCfg.NewHandler(cs, iOpts)
 		if err != nil {
 			return nil, err
 		}
-		writer, err := handler.NewWriter(scope)
+		writer, err := handler.NewWriter(iOpts.MetricsScope())
 		if err != nil {
 			return nil, err
 		}
 		writers = append(writers, writer)
 	}
 
-	return &passThroughWriter{
-		numShards: count,
-		writers:   writers,
-		locks:     make([]sync.Mutex, count),
-		shardFn:   shardFn,
-	}, nil
-}
-
-func (p *passThroughWriter) Write(mp aggregated.ChunkedMetricWithStoragePolicy) error {
-	shardID := p.shardFn([]byte(mp.ChunkedID.String()), uint32(p.numShards))
-	p.locks[shardID].Lock()
-	defer p.locks[shardID].Unlock()
-	return p.writers[shardID].Write(mp)
-}
-
-func (p *passThroughWriter) Flush() error {
-	errStr := "failed to flush passthrough writer"
-	failed := false
-	for i := 0; i < p.numShards; i++ {
-		p.locks[i].Lock()
-		if err := p.writers[i].Flush(); err != nil {
-			failed = true
-			errStr += fmt.Sprintf(". Writer#%d-%v", i, err)
-		}
-		p.locks[i].Unlock()
-	}
-	if failed {
-		return errors.New(errStr)
-	}
-	return nil
-}
-
-func (p *passThroughWriter) Close() error {
-	errStr := "failed to close passthrough writer"
-	failed := false
-	for i := 0; i < p.numShards; i++ {
-		p.locks[i].Lock()
-		if err := p.writers[i].Close(); err != nil {
-			failed = true
-			errStr += fmt.Sprintf(". Writer#%d-%v", i, err)
-		}
-		p.locks[i].Unlock()
-	}
-	if failed {
-		return errors.New(errStr)
-	}
-	return nil
+	return writer.NewShardedWriter(writers, shardFn, iOpts)
 }

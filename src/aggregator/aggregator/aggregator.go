@@ -76,7 +76,7 @@ type Aggregator interface {
 	// AddForwarded adds a forwarded metric with metadata.
 	AddForwarded(metric aggregated.ForwardedMetric, metadata metadata.ForwardMetadata) error
 
-	// AddPassThrough add a pass-through metric with metadata
+	// AddPassThrough add a pass-through metric with metadata.
 	AddPassThrough(metric aggregated.Metric, metadata metadata.TimedMetadata) error
 
 	// Resign stops the aggregator from participating in leader election and resigns
@@ -249,11 +249,16 @@ func (agg *aggregator) AddPassThrough(
 	callStart := agg.nowFn()
 	agg.metrics.passThrough.Inc(1)
 
+	agg.RLock()
 	if agg.state != aggregatorOpen {
+		agg.RUnlock()
 		agg.metrics.addPassThrough.ReportError(errAggregatorAlreadyOpenOrClosed)
 		return errAggregatorNotOpenOrClosed
 	}
-	if agg.passThroughWriter == nil {
+	passThroughWriter := agg.passThroughWriter
+	agg.RUnlock()
+
+	if passThroughWriter == nil {
 		agg.metrics.addPassThrough.ReportError(errPassThroughWriterNotDefined)
 		return errPassThroughWriterNotDefined
 	}
@@ -270,7 +275,7 @@ func (agg *aggregator) AddPassThrough(
 		},
 		StoragePolicy: metadata.StoragePolicy,
 	}
-	if err := agg.passThroughWriter.Write(mp); err != nil {
+	if err := passThroughWriter.Write(mp); err != nil {
 		agg.metrics.addPassThrough.ReportError(err)
 		return err
 	}
